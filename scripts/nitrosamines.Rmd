@@ -1,0 +1,221 @@
+---
+title: "LFB"
+author: "Scott Coffin"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(HH)
+library(cols4all)
+library(MetBrewer)
+library(agricolae)
+library(multcompView)
+```
+```{r}
+knitr::write_bib(c(.packages()), "output/packages.bib")
+```
+
+```{r}
+#read in LFB data
+LFB_long <- read.csv("input/LFB_long.csv")
+
+```
+
+```{r}
+LFB_pivot <- LFB_long %>% 
+  pivot_longer(cols = 4:10,
+               names_to = "recovery") %>% 
+  mutate(Analyte = as.factor(Analyte)) %>% 
+  drop_na()
+
+LFB_pivot
+```
+
+```{r}
+LFB_pivot %>% 
+  group_by(Lab, Analyte) %>% 
+  summarize(mean = mean(value),
+            var = var(value))
+```
+# One-way anova by analyte
+```{r}
+anova <- aov(value ~ Analyte,
+             data = LFB_pivot)
+
+anova_result <- (summary(anova))
+
+tidy_anova <- broom::tidy(anova)
+
+
+# Export ANOVA summary to CSV
+write.csv(tidy_anova, file = "output/LFB_ANOVA_oneway.csv", row.names = FALSE)
+
+summary(anova)
+```
+
+```{r}
+# Tukey's test
+tukey <- TukeyHSD(anova)
+
+# compact letter display
+cld <- multcompView::multcompLetters4(anova, tukey)
+
+# table with factors and 3rd quantile
+dt <- group_by(LFB_pivot, Analyte) %>%
+  summarise(w=mean(value), sd = sd(value)) %>%
+  arrange(desc(w))
+
+# extracting the compact letter display and adding to the Tk table
+cld <- as.data.frame.list(cld$Analyte)
+dt$cld <- cld$Letters
+
+write.csv(dt, file = "output/LFB_TUKEY_oneway.csv", row.names = FALSE)
+
+#print data tabnle
+dt
+```
+
+```{r}
+boxplot_analyte <- LFB_pivot %>% 
+  ggplot(aes(x = factor(Analyte), y = value, fill = Analyte)) +
+  geom_boxplot(#outlier.shape = NA
+    ) +
+  xlab("Analyte") +
+  
+  scale_y_continuous(labels = scales::percent_format(scale = 100),
+                     name = "Recovery") +
+  scale_fill_manual(values = met.brewer("Klimt", 8)) +
+  # geom_text(aes(label = tukey_letters), 
+  #           position = position_dodge(width = 0.75), 
+  #           vjust = -0.5) +  # Adjust the vertical position of the letters
+  #geom_point(aes(fill = LabID), size = 1, shape = 21, alpha = 0.7, 
+               #position = position_jitterdodge())
+  theme_bw(base_size = 15) +
+ theme(legend.position = "none")
+
+ggsave(boxplot_analyte,
+       filename = "output/boxplot_analyte.png",
+       device = "png",
+       width = 8,
+       height = 5)
+
+
+boxplot_analyte
+```
+
+
+
+```{r}
+boxplot <- LFB_pivot %>% 
+  ggplot(aes(x = factor(Analyte), y = value, fill = LabID)) +
+  geom_boxplot(outlier.shape = NA) +
+  xlab("Analyte") +
+  
+  scale_y_continuous(labels = scales::percent_format(scale = 100),
+                     name = "Recovery") +
+  scale_fill_manual(values = met.brewer("Klimt", 5)) +
+  #geom_point(aes(fill = LabID), size = 1, shape = 21, alpha = 0.7, 
+               #position = position_jitterdodge())
+  theme_bw(base_size = 15) +
+  theme(legend.position = c(0.7,0.07),
+        legend.direction = "horizontal",
+        legend.box.background = element_rect(color = "black", size = 0.5, linetype = "solid"))  # Add a box around the legend)
+
+ggsave(boxplot,
+       filename = "output/boxplot.png",
+       device = "png",
+       width = 8,
+       height = 5)
+
+
+boxplot
+```
+
+
+# Do recoveries differ by lab?
+```{r}
+model <- aov(value ~ LabID * Analyte,
+             data = LFB_pivot)
+
+anova_result <- (summary(model))
+
+tidy_anova <- broom::tidy(model)
+
+
+# Export ANOVA summary to CSV
+write.csv(tidy_anova, file = "output/LFB_ANOVA.csv", row.names = FALSE)
+
+summary(model)
+```
+
+```{r}
+tukey_results <- TukeyHSD(model)
+
+print(tukey_results)
+```
+
+```{r}
+# Assuming LFB_pivot has LabID, Analyte, and value columns
+# Replace these column names with the actual column names in your dataset
+
+# Get unique Analytes
+analytes <- unique(LFB_pivot$Analyte)
+
+# Function to perform one-sample t-test for Lab6 within each Analyte
+perform_t_test <- function(analyte) {
+  subset_data_lab6 <- subset(LFB_pivot, LabID == "#6" & Analyte == analyte)
+  subset_data_all <- subset(LFB_pivot, Analyte == analyte)
+  
+  # Check if there are enough observations for the t-test for Lab6
+  if (length(subset_data_lab6$value) < 2) {
+    warning(paste("Not enough observations for", analyte, "with Lab6 - skipping t-test"))
+    return(NULL)
+  }
+  
+  # Check if there are enough observations for the t-test for all labs
+  if (length(subset_data_all$value) < 2) {
+    warning(paste("Not enough observations for", analyte, "with all labs - skipping t-test"))
+    return(NULL)
+  }
+  
+  t_test_result_lab6 <- t.test(subset_data_lab6$value, mu = mean(LFB_pivot$value))
+  t_test_result_all <- t.test(subset_data_all$value, mu = mean(LFB_pivot$value))
+  
+  # Extract relevant information
+  result_summary <- data.frame(
+    Analyte = analyte,
+  #  Analyte_tested = paste("Lab6 vs", analyte),
+    p_value_lab6 = t_test_result_lab6$p.value,
+    mean_value_lab6 = mean(subset_data_lab6$value),  # Mean value for Lab6
+    ci_low_lab6 = t_test_result_lab6$conf.int[1],  # 95% CI lower bound for Lab6
+    ci_high_lab6 = t_test_result_lab6$conf.int[2],  # 95% CI upper bound for Lab6
+  #  p_value_all = t_test_result_all$p.value,
+    mean_value_all = mean(subset_data_all$value),  # Mean value for all labs
+    ci_low_all = t_test_result_all$conf.int[1],  # 95% CI lower bound for all labs
+    ci_high_all = t_test_result_all$conf.int[2]  # 95% CI upper bound for all labs
+  )
+  
+  return(result_summary)
+}
+
+# Perform one-sample t-test for Lab6 within each Analyte
+t_test_results <- lapply(analytes, perform_t_test)
+
+# Combine results into a data frame
+t_test_results_df <- do.call(rbind, t_test_results)
+
+#save table to .csv
+write.csv(t_test_results_df,
+          "output/t_test_lab6.csv")
+
+# Display the results
+print(t_test_results_df)
+
+```
+
