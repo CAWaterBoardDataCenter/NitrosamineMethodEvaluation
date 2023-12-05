@@ -4,11 +4,11 @@ author: "Scott Coffin"
 date: "`r Sys.Date()`"
 output: html_document
 ---
-
+# Setup
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
+##Libraries
 ```{r}
 library(tidyverse)
 library(HH)
@@ -16,11 +16,13 @@ library(cols4all)
 library(MetBrewer)
 library(agricolae)
 library(multcompView)
+library(ggpubr)
+library(khroma)
 ```
 ```{r}
 knitr::write_bib(c(.packages()), "output/packages.bib")
 ```
-
+## Data
 ```{r}
 #read in LFB data
 LFB_long <- read.csv("input/LFB_long.csv")
@@ -29,7 +31,7 @@ LFB_long <- read.csv("input/LFB_long.csv")
 
 ```{r}
 LFB_pivot <- LFB_long %>% 
-  pivot_longer(cols = 4:10,
+  pivot_longer(cols = 3:9,
                names_to = "recovery") %>% 
   mutate(Analyte = as.factor(Analyte)) %>% 
   drop_na()
@@ -39,11 +41,12 @@ LFB_pivot
 
 ```{r}
 LFB_pivot %>% 
-  group_by(Lab, Analyte) %>% 
+  group_by(LabID, Analyte) %>% 
   summarize(mean = mean(value),
             var = var(value))
 ```
-# One-way anova by analyte
+# Analysis
+## One-way anova by analyte
 ```{r}
 anova <- aov(value ~ Analyte,
              data = LFB_pivot)
@@ -58,10 +61,13 @@ write.csv(tidy_anova, file = "output/LFB_ANOVA_oneway.csv", row.names = FALSE)
 
 summary(anova)
 ```
-
+### Tukey
 ```{r}
 # Tukey's test
 tukey <- TukeyHSD(anova)
+
+# save table
+write.csv(as.data.frame.list(tukey), file = "output/LFB_TUKEY_oneWay.csv")
 
 # compact letter display
 cld <- multcompView::multcompLetters4(anova, tukey)
@@ -75,12 +81,12 @@ dt <- group_by(LFB_pivot, Analyte) %>%
 cld <- as.data.frame.list(cld$Analyte)
 dt$cld <- cld$Letters
 
-write.csv(dt, file = "output/LFB_TUKEY_oneway.csv", row.names = FALSE)
+write.csv(dt, file = "output/LFB_TUKEY_CLD_oneway.csv", row.names = FALSE)
 
 #print data tabnle
 dt
 ```
-
+### Boxplot
 ```{r}
 boxplot_analyte <- LFB_pivot %>% 
   ggplot(aes(x = factor(Analyte), y = value, fill = Analyte)) +
@@ -109,8 +115,30 @@ ggsave(boxplot_analyte,
 boxplot_analyte
 ```
 
+## Two-Way ANOVA
+
+```{r}
+model <- aov(value ~ LabID * Analyte,
+             data = LFB_pivot)
+
+anova_result <- (summary(model))
+
+tidy_anova <- broom::tidy(model)
 
 
+# Export ANOVA summary to CSV
+write.csv(tidy_anova, file = "output/LFB_ANOVA.csv", row.names = FALSE)
+
+summary(model)
+```
+### Tukey
+```{r}
+tukey_results <- TukeyHSD(model)
+
+print(tukey_results)
+```
+
+### Boxplot  (Analyte and Lab)
 ```{r}
 boxplot <- LFB_pivot %>% 
   ggplot(aes(x = factor(Analyte), y = value, fill = LabID)) +
@@ -136,30 +164,60 @@ ggsave(boxplot,
 
 boxplot
 ```
-
-
-# Do recoveries differ by lab?
+### Boxplot (Lab only)
 ```{r}
-model <- aov(value ~ LabID * Analyte,
-             data = LFB_pivot)
+oneWay_lab <- aov(value ~ LabID, data = LFB_pivot)
 
-anova_result <- (summary(model))
+#Tukey's
+tukey_lab <- TukeyHSD(oneWay_lab)
 
-tidy_anova <- broom::tidy(model)
+#compact letter display
+cld_lab <- multcompLetters4(oneWay_lab, tukey_lab)
 
+# table with factors and 3rd quantile
+dt_lab <- group_by(LFB_pivot, LabID) %>%
+  summarise(v = mean(value), sd = sd(value)) %>%
+  arrange(desc(v))
 
-# Export ANOVA summary to CSV
-write.csv(tidy_anova, file = "output/LFB_ANOVA.csv", row.names = FALSE)
+# extracting the compact letter display and adding to the Tk table
+cld_lab_dt <- as.data.frame.list(cld_lab$LabID)
+dt_lab$cld <- cld_lab_dt$Letters
 
-summary(model)
+dt_lab
+```
+```{r}
+#join letters to LFB_pivot
+LFB_pivot_letters <- left_join(LFB_pivot, dt_lab, by = "LabID") %>% 
+  mutate(CLD = toupper(cld))
 ```
 
 ```{r}
-tukey_results <- TukeyHSD(model)
+boxplot_lab <- LFB_pivot_letters %>% 
+  ggplot(aes(x = factor(LabID), y = value, fill = LabID)) +
+  geom_boxplot(outlier.shape = NA) +
+  xlab("Laboratory ID") +
+  scale_y_continuous(labels = scales::percent_format(scale = 100),
+                     name = "LFB Recovery across Analytes") +
+  scale_color_mediumcontrast() +
+  #scale_fill_manual(values = as.vector(pals::okabe(5))) +
+  geom_label(aes(label = CLD, y = v + sd), vjust = -1, fill = "white", color = "black", alpha = 0.5) +
+  theme_bw(base_size = 15) +
+  theme(legend.position = c(0.7,0.07),
+        legend.direction = "horizontal",
+        legend.box.background = element_rect(color = "black", size = 0.5, linetype = "solid"))  # Add a box around the legend)
 
-print(tukey_results)
+ggsave(boxplot_lab,
+       filename = "output/boxplot_lab.png",
+       device = "png",
+       width = 8,
+       height = 5)
+
+
+boxplot_lab
 ```
 
+## Multiple T-tests
+Does Lab ID#6 differ from other labs?
 ```{r}
 # Assuming LFB_pivot has LabID, Analyte, and value columns
 # Replace these column names with the actual column names in your dataset
