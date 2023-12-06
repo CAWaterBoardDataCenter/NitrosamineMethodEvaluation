@@ -135,6 +135,9 @@ summary(model)
 ```{r}
 tukey_results <- TukeyHSD(model)
 
+tukey_lab_csv <- broom::tidy(tukey_results)
+write.csv(tukey_lab_csv, "output/tukey_lab.csv")
+
 print(tukey_results)
 ```
 
@@ -202,7 +205,7 @@ boxplot_lab <- LFB_pivot_letters %>%
   #scale_fill_manual(values = as.vector(pals::okabe(5))) +
   geom_label(aes(label = CLD, y = v + sd), vjust = -1, fill = "white", color = "black", alpha = 0.5) +
   theme_bw(base_size = 15) +
-  theme(legend.position = c(0.7,0.07),
+  theme(legend.position = "none",
         legend.direction = "horizontal",
         legend.box.background = element_rect(color = "black", size = 0.5, linetype = "solid"))  # Add a box around the legend)
 
